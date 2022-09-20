@@ -14,14 +14,16 @@ import (
 type cmdFunc func(int64) error
 
 type Bot struct {
-	client     *tgbotapi.BotAPI
-	promClient *prometheus.Client
-	commands   map[string]cmdFunc
+	client       *tgbotapi.BotAPI
+	promClient   *prometheus.Client
+	commands     map[string]cmdFunc
+	allowedChats map[int64]bool
 }
 
 type BotConfig struct {
-	Token    string
-	PromAddr string
+	Token          string
+	PromAddr       string
+	AllowedCharIDs []int64
 }
 
 func NewBot(cfg BotConfig) (Bot, error) {
@@ -34,7 +36,16 @@ func NewBot(cfg BotConfig) (Bot, error) {
 	if err != nil {
 		return Bot{}, err
 	}
-	b := Bot{client: bot, promClient: prom}
+
+	var allowedChats map[int64]bool
+	if cfg.AllowedCharIDs != nil {
+		allowedChats = make(map[int64]bool)
+		for _, cid := range cfg.AllowedCharIDs {
+			allowedChats[cid] = true
+		}
+	}
+
+	b := Bot{client: bot, promClient: prom, allowedChats: allowedChats}
 	b.commands = map[string]cmdFunc{
 		"pi_temperature": b.GetTemp,
 	}
@@ -73,7 +84,14 @@ func (b Bot) GetTemp(chatID int64) error {
 
 func (b Bot) processMessage(upd tgbotapi.Update) error {
 	if upd.Message != nil {
-		log.Printf("Got message from %d", upd.Message.Chat.ID)
+		cid := upd.Message.Chat.ID
+		if b.allowedChats != nil {
+			if _, found := b.allowedChats[cid]; !found {
+				log.Printf("WARNING received message from prohibited chat %d", cid)
+				return nil
+			}
+		}
+		log.Printf("Got message from %d", cid)
 		if upd.Message.IsCommand() {
 			cmd, found := b.commands[upd.Message.Command()]
 			if !found {
